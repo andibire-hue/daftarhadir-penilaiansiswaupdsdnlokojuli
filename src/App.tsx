@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Header } from './components/Header';
+import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import { auth, googleProvider } from './firebase';
+import { Header, type CloudSyncStatus } from './components/Header';
 import { ClassNavigation } from './components/ClassNavigation';
 import { StatsCards } from './components/StatsCards';
 import { ClassAnalyticsDashboard } from './components/ClassAnalyticsDashboard';
@@ -34,6 +36,14 @@ import {
   loadCurriculumStore,
   saveCurriculumStore,
 } from './utils/curriculumStorage';
+import {
+  bootstrapCloudFromLocalIfEmpty,
+  subscribeUserCloudData,
+  syncClassAttendanceToCloud,
+  syncClassStudentsToCloud,
+  syncCurriculumStoreToCloud,
+  syncSchoolInfoToCloud,
+} from './utils/cloudSync';
 import {
   calculateFinalScore,
   calculatePredicate,
@@ -100,6 +110,19 @@ export default function App() {
     onConfirm: () => {},
   });
 
+  const [cloudUser, setCloudUser] = useState<User | null>(null);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>('offline');
+  const currentClassRef = useRef<ClassGrade>(currentClass);
+  const cloudStudentIdsRef = useRef<Set<string>>(new Set());
+  const cloudSessionIdsRef = useRef<Set<string>>(new Set());
+  const cloudCurriculumKeysRef = useRef<Set<string>>(new Set());
+  const hasCloudSettingsRef = useRef<boolean>(false);
+  const hasCloudCurriculumMetaRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    currentClassRef.current = currentClass;
+  }, [currentClass]);
+
   // Student counts cache for each class
   const [studentCounts, setStudentCounts] = useState<Record<ClassGrade, number>>({
     'Kelas 1': 0,
@@ -135,8 +158,86 @@ export default function App() {
     setStudentCounts(counts);
   };
 
+  // Firebase Auth & Real-Time Cross-Device Sync
   useEffect(() => {
+    let unsubCloud: (() => void) | null = null;
+    let isMounted = true;
+
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      if (unsubCloud) {
+        unsubCloud();
+        unsubCloud = null;
+      }
+
+      if (!user) {
+        if (!isMounted) return;
+        setCloudUser(null);
+        setCloudSyncStatus('offline');
+        cloudStudentIdsRef.current = new Set();
+        cloudSessionIdsRef.current = new Set();
+        cloudCurriculumKeysRef.current = new Set();
+        hasCloudSettingsRef.current = false;
+        hasCloudCurriculumMetaRef.current = false;
+        return;
+      }
+
+      if (!isMounted) return;
+      setCloudUser(user);
+      setCloudSyncStatus('syncing');
+
+      try {
+        await bootstrapCloudFromLocalIfEmpty(user.uid);
+        if (!isMounted) return;
+
+        unsubCloud = subscribeUserCloudData(user.uid, {
+          onSchoolInfo: (info) => {
+            if (!isMounted) return;
+            setSchoolInfo(info);
+            setCloudSyncStatus('synced');
+          },
+          onStudentsByClass: (byClass, cloudIds) => {
+            if (!isMounted) return;
+            cloudStudentIdsRef.current = cloudIds;
+            const activeCls = currentClassRef.current;
+            setStudents(byClass[activeCls] || []);
+            refreshAllCounts();
+            setCloudSyncStatus('synced');
+          },
+          onAttendanceByClass: (byClass, cloudIds) => {
+            if (!isMounted) return;
+            cloudSessionIdsRef.current = cloudIds;
+            const activeCls = currentClassRef.current;
+            setAttendanceSessions(byClass[activeCls] || []);
+            setCloudSyncStatus('synced');
+          },
+          onCurriculumStore: (nextStore, cloudKeys, hasMeta) => {
+            if (!isMounted) return;
+            cloudCurriculumKeysRef.current = cloudKeys;
+            hasCloudCurriculumMetaRef.current = hasMeta;
+            setCurriculumStore(nextStore);
+            setCloudSyncStatus('synced');
+          },
+          onMetaStatus: (hasSettings, hasMeta) => {
+            hasCloudSettingsRef.current = hasSettings;
+            hasCloudCurriculumMetaRef.current = hasMeta;
+          },
+        });
+      } catch (err) {
+        console.error('Cloud sync bootstrap error:', err);
+        if (isMounted) {
+          setCloudSyncStatus('error');
+          showToast(
+            'Gagal menyinkronkan data ke cloud. Data lokal tetap aman tersimpan.',
+            'error'
+          );
+        }
+      }
+    });
+
     return () => {
+      isMounted = false;
+      unsubAuth();
+      if (unsubCloud) unsubCloud();
       if (toastTimerRef.current) {
         window.clearTimeout(toastTimerRef.current);
       }
@@ -156,6 +257,85 @@ export default function App() {
 
   const closeConfirmDialog = () => {
     setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+  };
+
+  const handleSignInGoogle = async () => {
+    try {
+      setCloudSyncStatus('syncing');
+      const result = await signInWithPopup(auth, googleProvider);
+      showToast(
+        `Berhasil masuk sebagai ${result.user.email}. Sinkronisasi HP & komputer aktif!`
+      );
+    } catch (err) {
+      setCloudSyncStatus('offline');
+      const msg =
+        err instanceof Error && err.message.includes('popup-closed')
+          ? 'Login Google dibatalkan.'
+          : 'Gagal masuk dengan Google. Pastikan pop-up login tidak diblokir.';
+      showToast(msg, 'error');
+    }
+  };
+
+  const handleSignOutGoogle = async () => {
+    try {
+      await signOut(auth);
+      showToast('Keluar dari sinkronisasi Cloud. Aplikasi berjalan dalam mode lokal.');
+    } catch {
+      showToast('Gagal keluar dari akun Google.', 'error');
+    }
+  };
+
+  const pushStudentsCloud = (cls: ClassGrade, list: StudentGrade[]) => {
+    if (!cloudUser) return;
+    setCloudSyncStatus('syncing');
+    syncClassStudentsToCloud(cloudUser.uid, cls, list, cloudStudentIdsRef.current)
+      .then(() => setCloudSyncStatus('synced'))
+      .catch(() => setCloudSyncStatus('error'));
+  };
+
+  const pushAttendanceCloud = (cls: ClassGrade, sessions: ClassAttendanceSession[]) => {
+    if (!cloudUser) return;
+    setCloudSyncStatus('syncing');
+    syncClassAttendanceToCloud(cloudUser.uid, cls, sessions, cloudSessionIdsRef.current)
+      .then(() => setCloudSyncStatus('synced'))
+      .catch(() => setCloudSyncStatus('error'));
+  };
+
+  const handleManualCloudSync = async () => {
+    if (!cloudUser) return;
+    setCloudSyncStatus('syncing');
+    try {
+      await syncSchoolInfoToCloud(
+        cloudUser.uid,
+        loadSchoolInfo(),
+        hasCloudSettingsRef.current
+      );
+      for (const cls of ALL_CLASSES) {
+        await syncClassStudentsToCloud(
+          cloudUser.uid,
+          cls,
+          loadClassGrades(cls),
+          cloudStudentIdsRef.current
+        );
+        await syncClassAttendanceToCloud(
+          cloudUser.uid,
+          cls,
+          loadClassAttendance(cls),
+          cloudSessionIdsRef.current
+        );
+      }
+      await syncCurriculumStoreToCloud(
+        cloudUser.uid,
+        curriculumStore,
+        cloudCurriculumKeysRef.current,
+        hasCloudCurriculumMetaRef.current
+      );
+      setCloudSyncStatus('synced');
+      showToast('Seluruh data (Nilai, Absensi, Pengaturan & Perangkat Pembelajaran) tersinkron ke Cloud!');
+    } catch {
+      setCloudSyncStatus('error');
+      showToast('Sebagian data gagal disinkronkan ke Cloud.', 'error');
+    }
   };
 
   const handleSelectClass = (cls: ClassGrade) => {
@@ -205,6 +385,7 @@ export default function App() {
 
     setStudents(updatedList);
     saveClassGrades(currentClass, updatedList);
+    pushStudentsCloud(currentClass, updatedList);
     setEditingStudent(null);
     refreshAllCounts();
   };
@@ -239,6 +420,7 @@ export default function App() {
 
     setStudents(updatedList);
     saveClassGrades(currentClass, updatedList);
+    pushStudentsCloud(currentClass, updatedList);
     setEditingStudent((curr) => {
       if (!curr || curr.id !== studentId) return curr;
       return updatedList.find((s) => s.id === studentId) || null;
@@ -282,6 +464,7 @@ export default function App() {
     }
 
     saveClassGrades(targetClass, updatedList);
+    pushStudentsCloud(targetClass, updatedList);
     if (targetClass === currentClass) {
       setStudents(updatedList);
     } else {
@@ -325,6 +508,7 @@ export default function App() {
 
     const updatedList = [...toPrepend, ...existingList];
     saveClassGrades(targetClass, updatedList);
+    pushStudentsCloud(targetClass, updatedList);
     if (targetClass === currentClass) {
       setStudents(updatedList);
     } else {
@@ -368,6 +552,7 @@ export default function App() {
     }
 
     saveClassGrades(targetClass, finalList);
+    pushStudentsCloud(targetClass, finalList);
     if (targetClass === currentClass) {
       setStudents(finalList);
     } else {
@@ -394,6 +579,7 @@ export default function App() {
         const currentList = loadClassGrades(targetClass);
         const updatedList = currentList.filter((s) => s.id !== id);
         saveClassGrades(targetClass, updatedList);
+        pushStudentsCloud(targetClass, updatedList);
         setStudents(updatedList);
         setEditingStudent((curr) => (curr?.id === id ? null : curr));
 
@@ -407,6 +593,7 @@ export default function App() {
             return { ...ses, records: nextRecords };
           });
           saveClassAttendance(targetClass, cleanedSessions);
+          pushAttendanceCloud(targetClass, cleanedSessions);
           setAttendanceSessions(cleanedSessions);
         }
 
@@ -428,6 +615,7 @@ export default function App() {
       variant: 'danger',
       onConfirm: () => {
         saveClassGrades(targetClass, []);
+        pushStudentsCloud(targetClass, []);
         setStudents([]);
         setEditingStudent(null);
         refreshAllCounts();
@@ -453,6 +641,7 @@ export default function App() {
         }));
         setStudents(sample);
         saveClassGrades(targetClass, sample);
+        pushStudentsCloud(targetClass, sample);
         setEditingStudent(null);
         refreshAllCounts();
         closeConfirmDialog();
@@ -491,6 +680,7 @@ export default function App() {
   const handleSaveAttendanceSessions = (updatedSessions: ClassAttendanceSession[]) => {
     setAttendanceSessions(updatedSessions);
     saveClassAttendance(currentClass, updatedSessions);
+    pushAttendanceCloud(currentClass, updatedSessions);
   };
 
   // Request delete attendance session via ConfirmModal
@@ -506,6 +696,7 @@ export default function App() {
         const currentSessions = loadClassAttendance(targetClass);
         const next = currentSessions.filter((s) => s.date !== dateToDelete);
         saveClassAttendance(targetClass, next);
+        pushAttendanceCloud(targetClass, next);
         setAttendanceSessions(next);
         closeConfirmDialog();
         showToast(`Data absensi tanggal ${formattedDate} telah dihapus.`);
@@ -527,6 +718,15 @@ export default function App() {
   const handleSaveSettings = (newInfo: SchoolInfo) => {
     setSchoolInfo(newInfo);
     saveSchoolInfo(newInfo);
+    if (cloudUser) {
+      setCloudSyncStatus('syncing');
+      syncSchoolInfoToCloud(cloudUser.uid, newInfo, hasCloudSettingsRef.current)
+        .then(() => {
+          hasCloudSettingsRef.current = true;
+          setCloudSyncStatus('synced');
+        })
+        .catch(() => setCloudSyncStatus('error'));
+    }
 
     ALL_CLASSES.forEach((cls) => {
       const list = loadClassGrades(cls);
@@ -535,6 +735,7 @@ export default function App() {
         status: calculateStatus(s.finalReportScore, newInfo.kktp),
       }));
       saveClassGrades(cls, updated);
+      pushStudentsCloud(cls, updated);
       if (cls === currentClass) {
         setStudents(updated);
       }
@@ -546,6 +747,20 @@ export default function App() {
   const handleUpdateCurriculumStore = (nextStore: CurriculumStoreState) => {
     setCurriculumStore(nextStore);
     saveCurriculumStore(nextStore);
+    if (cloudUser) {
+      setCloudSyncStatus('syncing');
+      syncCurriculumStoreToCloud(
+        cloudUser.uid,
+        nextStore,
+        cloudCurriculumKeysRef.current,
+        hasCloudCurriculumMetaRef.current
+      )
+        .then(() => {
+          hasCloudCurriculumMetaRef.current = true;
+          setCloudSyncStatus('synced');
+        })
+        .catch(() => setCloudSyncStatus('error'));
+    }
   };
 
   return (
@@ -555,6 +770,11 @@ export default function App() {
           {/* Header */}
           <Header
             schoolInfo={schoolInfo}
+            cloudUser={cloudUser}
+            cloudSyncStatus={cloudSyncStatus}
+            onSignInGoogle={handleSignInGoogle}
+            onSignOutGoogle={handleSignOutGoogle}
+            onManualCloudSync={handleManualCloudSync}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onDownloadStandalone={handleDownloadStandaloneHtml}
             onOpenSelfRegistration={() => setIsSelfRegOpen(true)}
