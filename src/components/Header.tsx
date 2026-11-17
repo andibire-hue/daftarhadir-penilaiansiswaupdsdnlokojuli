@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   School,
   Printer,
@@ -7,23 +7,23 @@ import {
   UserCheck,
   UploadCloud,
   Cloud,
-  CloudOff,
   RefreshCw,
-  LogIn,
-  LogOut,
+  KeyRound,
+  Link2,
+  Check,
+  X,
 } from 'lucide-react';
-import type { User } from 'firebase/auth';
 import { SchoolInfo } from '../types';
 
 export type CloudSyncStatus = 'offline' | 'syncing' | 'synced' | 'error';
 
 interface HeaderProps {
   schoolInfo: SchoolInfo;
-  cloudUser: User | null;
+  workspaceId: string;
   cloudSyncStatus: CloudSyncStatus;
-  onSignInGoogle: () => void;
-  onSignOutGoogle: () => void;
   onManualCloudSync: () => void;
+  onChangeWorkspaceId: (newCode: string) => { ok: boolean; error?: string };
+  onCopySyncLink: () => void;
   onOpenSettings: () => void;
   onDownloadStandalone: () => void;
   onOpenSelfRegistration: () => void;
@@ -33,17 +33,36 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   schoolInfo,
-  cloudUser,
+  workspaceId,
   cloudSyncStatus,
-  onSignInGoogle,
-  onSignOutGoogle,
   onManualCloudSync,
+  onChangeWorkspaceId,
+  onCopySyncLink,
   onOpenSettings,
   onDownloadStandalone,
   onOpenSelfRegistration,
   onOpenUploadModal,
   onPrint,
 }) => {
+  const [isEditingCode, setIsEditingCode] = useState(false);
+  const [codeDraft, setCodeDraft] = useState(workspaceId);
+  const [codeError, setCodeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCodeDraft(workspaceId);
+  }, [workspaceId]);
+
+  const handleSubmitCode = (e: React.FormEvent) => {
+    e.preventDefault();
+    const res = onChangeWorkspaceId(codeDraft);
+    if (res.ok) {
+      setCodeError(null);
+      setIsEditingCode(false);
+    } else {
+      setCodeError(res.error || 'Kode ruang kerja tidak valid.');
+    }
+  };
+
   return (
     <header className="bg-gradient-to-r from-blue-900 via-blue-800 to-indigo-900 text-white rounded-xl shadow-lg shadow-blue-950/10 mb-6 p-5 sm:p-6 no-print border border-blue-700/50">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
@@ -126,81 +145,123 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Cross-Device Cloud Sync Bar (Komputer & HP) */}
-      <div className="mt-4 pt-3.5 border-t border-white/15 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
-        {cloudUser ? (
-          <>
-            <div className="flex flex-wrap items-center gap-2 text-blue-100">
-              <span
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-semibold ${
-                  cloudSyncStatus === 'error'
-                    ? 'bg-red-500/25 text-red-100 border border-red-400/40'
-                    : cloudSyncStatus === 'syncing'
-                      ? 'bg-amber-500/25 text-amber-100 border border-amber-400/40'
-                      : 'bg-emerald-500/25 text-emerald-100 border border-emerald-400/40'
-                }`}
-              >
-                {cloudSyncStatus === 'syncing' ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Cloud className="w-3.5 h-3.5" />
-                )}
-                <span>
-                  {cloudSyncStatus === 'syncing'
-                    ? 'Menyinkronkan ke Cloud...'
-                    : cloudSyncStatus === 'error'
-                      ? 'Gangguan Sinkronisasi Cloud'
-                      : 'Tersinkronisasi Cloud (Komputer & HP)'}
-                </span>
+      {/* Zero-Login Cross-Device Cloud Sync Bar (Komputer & HP) */}
+      <div className="mt-4 pt-3.5 border-t border-white/15 flex flex-col gap-2.5 text-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="flex flex-wrap items-center gap-2 text-blue-100">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-semibold ${
+                cloudSyncStatus === 'error'
+                  ? 'bg-red-500/25 text-red-100 border border-red-400/40'
+                  : cloudSyncStatus === 'syncing'
+                    ? 'bg-amber-500/25 text-amber-100 border border-amber-400/40'
+                    : 'bg-emerald-500/25 text-emerald-100 border border-emerald-400/40'
+              }`}
+            >
+              {cloudSyncStatus === 'syncing' ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Cloud className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {cloudSyncStatus === 'syncing'
+                  ? 'Menyinkronkan ke Cloud...'
+                  : cloudSyncStatus === 'error'
+                    ? 'Gangguan Koneksi Cloud (Data Lokal Aman)'
+                    : 'Cloud Aktif · Tersimpan Otomatis (HP & Komputer)'}
               </span>
-              <span className="text-blue-200">
-                Akun: <b className="text-white">{cloudUser.email}</b>
-              </span>
-            </div>
+            </span>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onManualCloudSync}
-                disabled={cloudSyncStatus === 'syncing'}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold border border-white/20 transition-colors cursor-pointer disabled:opacity-50"
-                title="Kirim ulang seluruh data lokal saat ini ke Cloud"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Sinkronkan Sekarang</span>
-              </button>
-              <button
-                type="button"
-                onClick={onSignOutGoogle}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/35 text-red-100 font-semibold border border-red-400/30 transition-colors cursor-pointer"
-                title="Keluar dari sinkronisasi Google Cloud"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Keluar</span>
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-2 text-blue-100">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/10 text-blue-100 font-semibold border border-white/15">
-                <CloudOff className="w-3.5 h-3.5 text-amber-300" />
-                <span>Penyimpanan Lokal Perangkat Ini</span>
-              </span>
-              <span className="text-blue-200 text-[11px] sm:text-xs">
-                Masuk dengan Google agar data Nilai, Absensi, &amp; Perangkat Pembelajaran terbuka otomatis di komputer dan HP mana saja.
-              </span>
-            </div>
+            <span className="inline-flex items-center gap-1.5 text-blue-200">
+              <span>Ruang Data:</span>
+              <code className="px-2 py-0.5 rounded bg-blue-950/60 border border-blue-400/25 text-white font-mono text-[11px]">
+                {workspaceId}
+              </code>
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onCopySyncLink}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold border border-white/20 transition-colors cursor-pointer"
+              title="Salin link untuk dibuka di HP atau komputer lain tanpa login Google"
+            >
+              <Link2 className="w-3.5 h-3.5 text-blue-200" />
+              <span>Salin Link HP</span>
+            </button>
 
             <button
               type="button"
-              onClick={onSignInGoogle}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-white text-blue-900 hover:bg-blue-50 font-bold shadow-xs transition-colors cursor-pointer self-start sm:self-auto shrink-0"
+              onClick={() => {
+                setCodeDraft(workspaceId);
+                setCodeError(null);
+                setIsEditingCode((prev) => !prev);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold border border-white/20 transition-colors cursor-pointer"
+              title="Gunakan kode ruang kerja/PIN rahasia sekolah sendiri agar data lebih privat"
             >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>Masuk Google (Sync HP &amp; PC)</span>
+              <KeyRound className="w-3.5 h-3.5 text-amber-300" />
+              <span>Ganti Kode / Kunci</span>
             </button>
-          </>
+
+            <button
+              type="button"
+              onClick={onManualCloudSync}
+              disabled={cloudSyncStatus === 'syncing'}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/25 hover:bg-emerald-500/35 text-emerald-50 font-semibold border border-emerald-400/35 transition-colors cursor-pointer disabled:opacity-50"
+              title="Simpan & sinkronkan ulang seluruh data saat ini ke Cloud"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${cloudSyncStatus === 'syncing' ? 'animate-spin' : ''}`}
+              />
+              <span>Sinkronkan</span>
+            </button>
+          </div>
+        </div>
+
+        {isEditingCode && (
+          <form
+            onSubmit={handleSubmitCode}
+            className="flex flex-col sm:flex-row sm:items-center gap-2 bg-blue-950/60 border border-blue-400/30 rounded-lg p-2.5"
+          >
+            <div className="flex-1 flex flex-col gap-1">
+              <label className="text-[11px] font-semibold text-blue-100">
+                Kode Ruang Data Sekolah / PIN Sinkronisasi (tanpa perlu login Google, min. 6 karakter huruf/angka/_/-):
+              </label>
+              <input
+                type="text"
+                value={codeDraft}
+                onChange={(e) => {
+                  setCodeDraft(e.target.value);
+                  if (codeError) setCodeError(null);
+                }}
+                placeholder="contoh: lokojuli_pjok_2026"
+                className="w-full sm:max-w-sm px-2.5 py-1.5 rounded-md bg-white text-slate-900 font-mono text-xs border border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              {codeError && <span className="text-[11px] text-red-300 font-medium">{codeError}</span>}
+            </div>
+            <div className="flex items-center gap-2 self-end sm:self-center">
+              <button
+                type="submit"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-semibold cursor-pointer"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Terapkan</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditingCode(false);
+                  setCodeError(null);
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-white/10 hover:bg-white/20 text-blue-100 font-semibold cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Batal</span>
+              </button>
+            </div>
+          </form>
         )}
       </div>
     </header>

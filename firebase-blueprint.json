@@ -5,8 +5,9 @@
       "description": "Pengaturan identitas sekolah, guru, kepala sekolah, dan KKTP.",
       "type": "object",
       "properties": {
-        "ownerId": {
+        "workspaceId": {
           "type": "string",
+          "minLength": 6,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
@@ -59,7 +60,7 @@
         }
       },
       "required": [
-        "ownerId",
+        "workspaceId",
         "schoolName",
         "subject",
         "teacherName",
@@ -78,8 +79,9 @@
       "description": "Data siswa dan nilai PJOK per siswa per kelas (Kelas 1 s.d. Kelas 6).",
       "type": "object",
       "properties": {
-        "ownerId": {
+        "workspaceId": {
           "type": "string",
+          "minLength": 6,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
@@ -159,7 +161,7 @@
         }
       },
       "required": [
-        "ownerId",
+        "workspaceId",
         "localId",
         "kelas",
         "nis",
@@ -187,8 +189,9 @@
       "description": "Data absensi siswa per pertemuan (tanggal) per kelas.",
       "type": "object",
       "properties": {
-        "ownerId": {
+        "workspaceId": {
           "type": "string",
+          "minLength": 6,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
@@ -222,7 +225,7 @@
         }
       },
       "required": [
-        "ownerId",
+        "workspaceId",
         "kelas",
         "date",
         "topic",
@@ -237,8 +240,9 @@
       "description": "Metadata file sumber CP/ATP perangkat pembelajaran yang terakhir diunggah.",
       "type": "object",
       "properties": {
-        "ownerId": {
+        "workspaceId": {
           "type": "string",
+          "minLength": 6,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
@@ -263,7 +267,7 @@
         }
       },
       "required": [
-        "ownerId",
+        "workspaceId",
         "sourceFileName",
         "importedAt",
         "detectedSheets",
@@ -276,8 +280,9 @@
       "description": "Paket perangkat pembelajaran PJOK terpadu (CP, ATP, PROTA, PROMES, Materi, Modul Ajar, Asesmen) per kelas.",
       "type": "object",
       "properties": {
-        "ownerId": {
+        "workspaceId": {
           "type": "string",
+          "minLength": 6,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
@@ -338,7 +343,7 @@
         }
       },
       "required": [
-        "ownerId",
+        "workspaceId",
         "kelas",
         "fase",
         "identity",
@@ -359,23 +364,23 @@
     }
   },
   "firestore": {
-    "/users/{userId}/settings/{settingId}": {
+    "/workspaces/{workspaceId}/settings/{settingId}": {
       "schema": { "$ref": "#/entities/SchoolSettings" },
-      "description": "Pengaturan sekolah dan standar KKTP milik guru."
+      "description": "Pengaturan sekolah dan standar KKTP per ruang kerja sekolah."
     },
-    "/users/{userId}/students/{studentId}": {
+    "/workspaces/{workspaceId}/students/{studentId}": {
       "schema": { "$ref": "#/entities/StudentGradeRecord" },
       "description": "Data siswa dan nilai rapor PJOK per kelas."
     },
-    "/users/{userId}/attendanceSessions/{sessionId}": {
+    "/workspaces/{workspaceId}/attendanceSessions/{sessionId}": {
       "schema": { "$ref": "#/entities/AttendanceSessionRecord" },
       "description": "Sesi absensi per pertemuan per kelas."
     },
-    "/users/{userId}/curriculumMeta/{metaId}": {
+    "/workspaces/{workspaceId}/curriculumMeta/{metaId}": {
       "schema": { "$ref": "#/entities/CurriculumMeta" },
       "description": "Metadata impor perangkat pembelajaran terakhir."
     },
-    "/users/{userId}/curriculumClasses/{classKey}": {
+    "/workspaces/{workspaceId}/curriculumClasses/{classKey}": {
       "schema": { "$ref": "#/entities/CurriculumClassPackage" },
       "description": "Paket perangkat pembelajaran CP, ATP, PROTA, PROMES, Materi, Modul Ajar, Asesmen per kelas."
     }

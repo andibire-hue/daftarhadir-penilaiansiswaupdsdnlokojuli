@@ -31,6 +31,10 @@ import {
 import { loadCurriculumStore, saveCurriculumStore } from './curriculumStorage';
 import { ALL_CURRICULUM_CLASSES } from './curriculumGenerator';
 
+export const DEFAULT_WORKSPACE_ID = 'sdn_lokojuli_pjok_2026_2027';
+const WORKSPACE_STORAGE_KEY = 'lokojuli_pjok_workspace_id';
+const WORKSPACE_ID_REGEX = /^[a-zA-Z0-9_-]{6,128}$/;
+
 const ALL_CLASSES: ClassGrade[] = [
   'Kelas 1',
   'Kelas 2',
@@ -39,6 +43,59 @@ const ALL_CLASSES: ClassGrade[] = [
   'Kelas 5',
   'Kelas 6',
 ];
+
+export function normalizeWorkspaceCode(raw: string): string {
+  return String(raw || '')
+    .trim()
+    .replace(/\s+/g, '_');
+}
+
+export function isValidWorkspaceCode(raw: string): boolean {
+  return WORKSPACE_ID_REGEX.test(normalizeWorkspaceCode(raw));
+}
+
+export function getActiveWorkspaceId(): string {
+  if (typeof window !== 'undefined') {
+    try {
+      const url = new URL(window.location.href);
+      const syncParam = url.searchParams.get('sync');
+      if (syncParam && isValidWorkspaceCode(syncParam)) {
+        const clean = normalizeWorkspaceCode(syncParam);
+        localStorage.setItem(WORKSPACE_STORAGE_KEY, clean);
+        url.searchParams.delete('sync');
+        window.history.replaceState({}, '', url.toString());
+        return clean;
+      }
+      const saved = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+      if (saved && isValidWorkspaceCode(saved)) {
+        return normalizeWorkspaceCode(saved);
+      }
+    } catch {
+      // Fallback to default workspace ID if URL or localStorage fails
+    }
+  }
+  try {
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, DEFAULT_WORKSPACE_ID);
+  } catch {
+    // Ignore storage error
+  }
+  return DEFAULT_WORKSPACE_ID;
+}
+
+export function setActiveWorkspaceId(rawCode: string): string {
+  const clean = normalizeWorkspaceCode(rawCode);
+  if (!WORKSPACE_ID_REGEX.test(clean)) {
+    throw new Error(
+      'Kode ruang kerja minimal 6 karakter dan hanya boleh huruf, angka, garis bawah (_), atau strip (-).'
+    );
+  }
+  try {
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, clean);
+  } catch {
+    // Ignore storage error
+  }
+  return clean;
+}
 
 export function sanitizeDocId(raw: string): string {
   const cleaned = String(raw || '')
@@ -82,28 +139,28 @@ function clampScore(val: number): number {
   return Math.max(0, Math.min(100, n));
 }
 
-function buildSchoolPayload(uid: string, info: SchoolInfo) {
+function buildSchoolPayload(workspaceId: string, info: SchoolInfo) {
   return {
-    ownerId: uid,
-    schoolName: (info.schoolName || 'UPTD SD NEGERI LOKOJULI').slice(0, 150),
-    subject: (info.subject || 'PJOK').slice(0, 150),
-    teacherName: (info.teacherName || 'Guru PJOK').slice(0, 150),
+    workspaceId,
+    schoolName: (String(info.schoolName || '').trim() || 'UPTD SD NEGERI LOKOJULI').slice(0, 150),
+    subject: (String(info.subject || '').trim() || 'PJOK').slice(0, 150),
+    teacherName: (String(info.teacherName || '').trim() || 'Guru PJOK').slice(0, 150),
     teacherNip: String(info.teacherNip || '').slice(0, 60),
     principalName: String(info.principalName || '').slice(0, 150),
     principalNip: String(info.principalNip || '').slice(0, 60),
-    academicYear: (info.academicYear || '2026/2027').slice(0, 40),
+    academicYear: (String(info.academicYear || '').trim() || '2026/2027').slice(0, 40),
     semester: info.semester === 'Genap' ? 'Genap' : 'Ganjil',
     kktp: clampScore(info.kktp),
   };
 }
 
-function buildStudentPayload(uid: string, kelas: ClassGrade, s: StudentGrade) {
+function buildStudentPayload(workspaceId: string, kelas: ClassGrade, s: StudentGrade) {
   return {
-    ownerId: uid,
+    workspaceId,
     localId: sanitizeDocId(s.id),
     kelas,
     nis: String(s.nis || '').slice(0, 40),
-    name: (s.name || 'Siswa').slice(0, 150),
+    name: (String(s.name || '').trim() || 'Siswa').slice(0, 150),
     gender: s.gender === 'P' ? 'P' : 'L',
     dailyScore: clampScore(s.dailyScore),
     practicalScore: clampScore(s.practicalScore),
@@ -122,7 +179,7 @@ function buildStudentPayload(uid: string, kelas: ClassGrade, s: StudentGrade) {
 }
 
 function buildAttendancePayload(
-  uid: string,
+  workspaceId: string,
   kelas: ClassGrade,
   session: ClassAttendanceSession
 ) {
@@ -136,27 +193,27 @@ function buildAttendancePayload(
   });
 
   return {
-    ownerId: uid,
+    workspaceId,
     kelas,
-    date: String(session.date || '').slice(0, 30),
+    date: (String(session.date || '').trim() || new Date().toISOString().slice(0, 10)).slice(0, 30),
     topic: String(session.topic || '').slice(0, 200),
     records: sanitizedRecords,
     clientUpdatedAt: String(session.updatedAt || new Date().toISOString()).slice(0, 60),
   };
 }
 
-function buildCurriculumMetaPayload(uid: string, store: CurriculumStoreState) {
+function buildCurriculumMetaPayload(workspaceId: string, store: CurriculumStoreState) {
   return {
-    ownerId: uid,
+    workspaceId,
     sourceFileName: String(store.sourceFileName || '').slice(0, 200),
     importedAt: String(store.importedAt || '').slice(0, 60),
     detectedSheets: (store.detectedSheets || []).slice(0, 40).map((s) => String(s)),
   };
 }
 
-function buildCurriculumClassPayload(uid: string, pkg: ClassCurriculumPackage) {
+function buildCurriculumClassPayload(workspaceId: string, pkg: ClassCurriculumPackage) {
   return stripUndefined({
-    ownerId: uid,
+    workspaceId,
     kelas: pkg.kelas,
     fase: pkg.fase,
     identity: { ...pkg.identity },
@@ -175,16 +232,16 @@ function buildCurriculumClassPayload(uid: string, pkg: ClassCurriculumPackage) {
 }
 
 export async function syncSchoolInfoToCloud(
-  uid: string,
+  workspaceId: string,
   info: SchoolInfo,
   existsInCloud: boolean
 ): Promise<void> {
-  const path = `users/${uid}/settings/schoolInfo`;
-  const ref = doc(db, 'users', uid, 'settings', 'schoolInfo');
-  const payload = buildSchoolPayload(uid, info);
+  const path = `workspaces/${workspaceId}/settings/schoolInfo`;
+  const ref = doc(db, 'workspaces', workspaceId, 'settings', 'schoolInfo');
+  const payload = buildSchoolPayload(workspaceId, info);
   try {
     if (existsInCloud) {
-      const { ownerId: _ignore, ...updatable } = payload;
+      const { workspaceId: _ignore, ...updatable } = payload;
       await updateDoc(ref, {
         ...updatable,
         updatedAt: serverTimestamp(),
@@ -202,20 +259,20 @@ export async function syncSchoolInfoToCloud(
 }
 
 export async function syncClassStudentsToCloud(
-  uid: string,
+  workspaceId: string,
   kelas: ClassGrade,
   students: StudentGrade[],
   knownCloudIds: Set<string>
 ): Promise<void> {
   const prefix = `${classToKey(kelas)}__`;
   const targetDocIds = new Set(students.map((s) => studentDocId(kelas, s.id)));
-  const path = `users/${uid}/students`;
+  const path = `workspaces/${workspaceId}/students`;
 
   try {
     // Delete students removed from this class
     for (const existingId of Array.from(knownCloudIds)) {
       if (existingId.startsWith(prefix) && !targetDocIds.has(existingId)) {
-        await deleteDoc(doc(db, 'users', uid, 'students', existingId));
+        await deleteDoc(doc(db, 'workspaces', workspaceId, 'students', existingId));
         knownCloudIds.delete(existingId);
       }
     }
@@ -226,10 +283,10 @@ export async function syncClassStudentsToCloud(
       const chunk = students.slice(i, i + 400);
       chunk.forEach((student) => {
         const docId = studentDocId(kelas, student.id);
-        const ref = doc(db, 'users', uid, 'students', docId);
-        const payload = buildStudentPayload(uid, kelas, student);
+        const ref = doc(db, 'workspaces', workspaceId, 'students', docId);
+        const payload = buildStudentPayload(workspaceId, kelas, student);
         if (knownCloudIds.has(docId)) {
-          const { ownerId: _ignore, ...updatable } = payload;
+          const { workspaceId: _ignore, ...updatable } = payload;
           batch.update(ref, {
             ...updatable,
             updatedAt: serverTimestamp(),
@@ -251,29 +308,29 @@ export async function syncClassStudentsToCloud(
 }
 
 export async function syncClassAttendanceToCloud(
-  uid: string,
+  workspaceId: string,
   kelas: ClassGrade,
   sessions: ClassAttendanceSession[],
   knownCloudIds: Set<string>
 ): Promise<void> {
   const prefix = `${classToKey(kelas)}__`;
   const targetDocIds = new Set(sessions.map((s) => attendanceDocId(kelas, s.date)));
-  const path = `users/${uid}/attendanceSessions`;
+  const path = `workspaces/${workspaceId}/attendanceSessions`;
 
   try {
     for (const existingId of Array.from(knownCloudIds)) {
       if (existingId.startsWith(prefix) && !targetDocIds.has(existingId)) {
-        await deleteDoc(doc(db, 'users', uid, 'attendanceSessions', existingId));
+        await deleteDoc(doc(db, 'workspaces', workspaceId, 'attendanceSessions', existingId));
         knownCloudIds.delete(existingId);
       }
     }
 
     for (const session of sessions) {
       const docId = attendanceDocId(kelas, session.date);
-      const ref = doc(db, 'users', uid, 'attendanceSessions', docId);
-      const payload = buildAttendancePayload(uid, kelas, session);
+      const ref = doc(db, 'workspaces', workspaceId, 'attendanceSessions', docId);
+      const payload = buildAttendancePayload(workspaceId, kelas, session);
       if (knownCloudIds.has(docId)) {
-        const { ownerId: _ignore, ...updatable } = payload;
+        const { workspaceId: _ignore, ...updatable } = payload;
         await updateDoc(ref, {
           ...updatable,
           updatedAt: serverTimestamp(),
@@ -293,17 +350,17 @@ export async function syncClassAttendanceToCloud(
 }
 
 export async function syncCurriculumStoreToCloud(
-  uid: string,
+  workspaceId: string,
   store: CurriculumStoreState,
   knownClassKeys: Set<string>,
   hasMetaInCloud: boolean
 ): Promise<void> {
-  const metaPath = `users/${uid}/curriculumMeta/active`;
+  const metaPath = `workspaces/${workspaceId}/curriculumMeta/active`;
   try {
-    const metaRef = doc(db, 'users', uid, 'curriculumMeta', 'active');
-    const metaPayload = buildCurriculumMetaPayload(uid, store);
+    const metaRef = doc(db, 'workspaces', workspaceId, 'curriculumMeta', 'active');
+    const metaPayload = buildCurriculumMetaPayload(workspaceId, store);
     if (hasMetaInCloud) {
-      const { ownerId: _ignore, ...updatable } = metaPayload;
+      const { workspaceId: _ignore, ...updatable } = metaPayload;
       await updateDoc(metaRef, {
         ...updatable,
         updatedAt: serverTimestamp(),
@@ -327,12 +384,12 @@ export async function syncCurriculumStoreToCloud(
     const pkg = store.classes[cls];
     if (!pkg) continue;
     const key = classToKey(cls);
-    const classPath = `users/${uid}/curriculumClasses/${key}`;
+    const classPath = `workspaces/${workspaceId}/curriculumClasses/${key}`;
     try {
-      const ref = doc(db, 'users', uid, 'curriculumClasses', key);
-      const payload = buildCurriculumClassPayload(uid, pkg);
+      const ref = doc(db, 'workspaces', workspaceId, 'curriculumClasses', key);
+      const payload = buildCurriculumClassPayload(workspaceId, pkg);
       if (knownClassKeys.has(key)) {
-        const { ownerId: _ignore, ...updatable } = payload;
+        const { workspaceId: _ignore, ...updatable } = payload;
         await updateDoc(ref, {
           ...updatable,
           updatedAt: serverTimestamp(),
@@ -371,15 +428,30 @@ export interface CloudSnapshotCallbacks {
 }
 
 /**
- * Push local device data to cloud ONLY for slices that are still empty in cloud,
- * ensuring zero data loss on first login while keeping cloud data authoritative across devices.
+ * Push local device data to cloud ONLY for slices that are still empty in the active workspace,
+ * ensuring zero data loss on first open while keeping cloud data authoritative across devices.
  */
-export async function bootstrapCloudFromLocalIfEmpty(uid: string): Promise<void> {
-  const settingsQ = query(collection(db, 'users', uid, 'settings'), where('ownerId', '==', uid));
-  const studentsQ = query(collection(db, 'users', uid, 'students'), where('ownerId', '==', uid));
-  const attQ = query(collection(db, 'users', uid, 'attendanceSessions'), where('ownerId', '==', uid));
-  const currMetaQ = query(collection(db, 'users', uid, 'curriculumMeta'), where('ownerId', '==', uid));
-  const currClsQ = query(collection(db, 'users', uid, 'curriculumClasses'), where('ownerId', '==', uid));
+export async function bootstrapCloudFromLocalIfEmpty(workspaceId: string): Promise<void> {
+  const settingsQ = query(
+    collection(db, 'workspaces', workspaceId, 'settings'),
+    where('workspaceId', '==', workspaceId)
+  );
+  const studentsQ = query(
+    collection(db, 'workspaces', workspaceId, 'students'),
+    where('workspaceId', '==', workspaceId)
+  );
+  const attQ = query(
+    collection(db, 'workspaces', workspaceId, 'attendanceSessions'),
+    where('workspaceId', '==', workspaceId)
+  );
+  const currMetaQ = query(
+    collection(db, 'workspaces', workspaceId, 'curriculumMeta'),
+    where('workspaceId', '==', workspaceId)
+  );
+  const currClsQ = query(
+    collection(db, 'workspaces', workspaceId, 'curriculumClasses'),
+    where('workspaceId', '==', workspaceId)
+  );
 
   let settingsSnap, studentsSnap, attSnap, currMetaSnap, currClsSnap;
 
@@ -392,22 +464,22 @@ export async function bootstrapCloudFromLocalIfEmpty(uid: string): Promise<void>
       getDocs(currClsQ),
     ]);
   } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, `users/${uid}`);
+    handleFirestoreError(error, OperationType.LIST, `workspaces/${workspaceId}`);
   }
 
   // 1. Settings
   if (settingsSnap.empty) {
     const localInfo = loadSchoolInfo();
-    await syncSchoolInfoToCloud(uid, localInfo, false);
+    await syncSchoolInfoToCloud(workspaceId, localInfo, false);
   }
 
-  // 2. Students (per class check or empty collection check)
+  // 2. Students
   if (studentsSnap.empty) {
     const emptySet = new Set<string>();
     for (const cls of ALL_CLASSES) {
       const localStudents = loadClassGrades(cls);
       if (localStudents.length > 0) {
-        await syncClassStudentsToCloud(uid, cls, localStudents, emptySet);
+        await syncClassStudentsToCloud(workspaceId, cls, localStudents, emptySet);
       }
     }
   }
@@ -418,7 +490,7 @@ export async function bootstrapCloudFromLocalIfEmpty(uid: string): Promise<void>
     for (const cls of ALL_CLASSES) {
       const localSessions = loadClassAttendance(cls);
       if (localSessions.length > 0) {
-        await syncClassAttendanceToCloud(uid, cls, localSessions, emptySet);
+        await syncClassAttendanceToCloud(workspaceId, cls, localSessions, emptySet);
       }
     }
   }
@@ -426,12 +498,12 @@ export async function bootstrapCloudFromLocalIfEmpty(uid: string): Promise<void>
   // 4. Curriculum
   if (currMetaSnap.empty && currClsSnap.empty) {
     const localCurr = loadCurriculumStore();
-    await syncCurriculumStoreToCloud(uid, localCurr, new Set<string>(), false);
+    await syncCurriculumStoreToCloud(workspaceId, localCurr, new Set<string>(), false);
   }
 }
 
-export function subscribeUserCloudData(
-  uid: string,
+export function subscribeWorkspaceCloudData(
+  workspaceId: string,
   callbacks: CloudSnapshotCallbacks
 ): () => void {
   const unsubscribes: Array<() => void> = [];
@@ -462,7 +534,10 @@ export function subscribeUserCloudData(
   };
 
   // 1. Settings listener
-  const settingsQ = query(collection(db, 'users', uid, 'settings'), where('ownerId', '==', uid));
+  const settingsQ = query(
+    collection(db, 'workspaces', workspaceId, 'settings'),
+    where('workspaceId', '==', workspaceId)
+  );
   unsubscribes.push(
     onSnapshot(
       settingsQ,
@@ -486,12 +561,16 @@ export function subscribeUserCloudData(
           callbacks.onSchoolInfo(info);
         }
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, `users/${uid}/settings`)
+      (error) =>
+        handleFirestoreError(error, OperationType.LIST, `workspaces/${workspaceId}/settings`)
     )
   );
 
   // 2. Students listener
-  const studentsQ = query(collection(db, 'users', uid, 'students'), where('ownerId', '==', uid));
+  const studentsQ = query(
+    collection(db, 'workspaces', workspaceId, 'students'),
+    where('workspaceId', '==', workspaceId)
+  );
   unsubscribes.push(
     onSnapshot(
       studentsQ,
@@ -540,14 +619,15 @@ export function subscribeUserCloudData(
         });
         callbacks.onStudentsByClass(byClass, cloudIds);
       },
-      (error) => handleFirestoreError(error, OperationType.LIST, `users/${uid}/students`)
+      (error) =>
+        handleFirestoreError(error, OperationType.LIST, `workspaces/${workspaceId}/students`)
     )
   );
 
   // 3. Attendance listener
   const attQ = query(
-    collection(db, 'users', uid, 'attendanceSessions'),
-    where('ownerId', '==', uid)
+    collection(db, 'workspaces', workspaceId, 'attendanceSessions'),
+    where('workspaceId', '==', workspaceId)
   );
   unsubscribes.push(
     onSnapshot(
@@ -583,14 +663,18 @@ export function subscribeUserCloudData(
         callbacks.onAttendanceByClass(byClass, cloudIds);
       },
       (error) =>
-        handleFirestoreError(error, OperationType.LIST, `users/${uid}/attendanceSessions`)
+        handleFirestoreError(
+          error,
+          OperationType.LIST,
+          `workspaces/${workspaceId}/attendanceSessions`
+        )
     )
   );
 
   // 4. Curriculum meta listener
   const currMetaQ = query(
-    collection(db, 'users', uid, 'curriculumMeta'),
-    where('ownerId', '==', uid)
+    collection(db, 'workspaces', workspaceId, 'curriculumMeta'),
+    where('workspaceId', '==', workspaceId)
   );
   unsubscribes.push(
     onSnapshot(
@@ -608,14 +692,18 @@ export function subscribeUserCloudData(
         }
       },
       (error) =>
-        handleFirestoreError(error, OperationType.LIST, `users/${uid}/curriculumMeta`)
+        handleFirestoreError(
+          error,
+          OperationType.LIST,
+          `workspaces/${workspaceId}/curriculumMeta`
+        )
     )
   );
 
   // 5. Curriculum classes listener
   const currClsQ = query(
-    collection(db, 'users', uid, 'curriculumClasses'),
-    where('ownerId', '==', uid)
+    collection(db, 'workspaces', workspaceId, 'curriculumClasses'),
+    where('workspaceId', '==', workspaceId)
   );
   unsubscribes.push(
     onSnapshot(
@@ -651,7 +739,11 @@ export function subscribeUserCloudData(
         }
       },
       (error) =>
-        handleFirestoreError(error, OperationType.LIST, `users/${uid}/curriculumClasses`)
+        handleFirestoreError(
+          error,
+          OperationType.LIST,
+          `workspaces/${workspaceId}/curriculumClasses`
+        )
     )
   );
 
